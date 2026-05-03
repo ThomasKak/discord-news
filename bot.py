@@ -7,17 +7,21 @@ import json
 from flask import Flask
 import threading
 
-# ------ Μικρός web server για το Render (δεν επηρεάζει το bot) ------
-app_flask = Flask('')
-@app_flask.route('/')
+# ------ Flask για το Render (τρέχει σε ξεχωριστό thread) ------
+app = Flask('')
+
+@app.route('/')
 def home():
     return "Bot is running!"
 
 def run_flask():
-    app_flask.run(host='0.0.0.0', port=10000)
-threading.Thread(target=run_flask).start()
-# ------------------------------------------------------------------
+    app.run(host='0.0.0.0', port=10000, debug=False, use_reloader=False)
 
+flask_thread = threading.Thread(target=run_flask, daemon=True)
+flask_thread.start()
+# ---------------------------------------------------------------
+
+# ------ Discord Bot ------
 intents = discord.Intents.default()
 intents.message_content = True
 
