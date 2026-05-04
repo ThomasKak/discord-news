@@ -7,21 +7,22 @@ import json
 from flask import Flask
 import threading
 
-# ------ Flask για το Render (τρέχει σε ξεχωριστό thread) ------
-app = Flask('')
+# -------- Flask (για να μην κοιμάται στο Render) --------
+app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Bot is running!"
 
 def run_flask():
-    app.run(host='0.0.0.0', port=10000, debug=False, use_reloader=False)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
-flask_thread = threading.Thread(target=run_flask, daemon=True)
-flask_thread.start()
-# ---------------------------------------------------------------
+threading.Thread(target=run_flask).start()
+# -------------------------------------------------------
 
-# ------ Discord Bot ------
+
+# -------- Discord Bot --------
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -31,6 +32,8 @@ RSS_URL = "https://eupoliteuesthai.com/feed/"
 CHANNEL_NAME = "ανακοινώσεις"
 SENT_FILE = "sent_links.json"
 
+
+# -------- Load / Save --------
 def load_sent_links():
     if os.path.exists(SENT_FILE):
         with open(SENT_FILE, "r") as f:
@@ -43,55 +46,73 @@ def save_sent_links(links):
 
 sent_links = load_sent_links()
 
+
+# -------- Bot Ready --------
 @bot.event
 async def on_ready():
-    print(f'✅ Το bot {bot.user} είναι online!')
-    print(f'🔍 Παρακολουθώ RSS: {RSS_URL}')
-    print(f'📌 Θυμάμαι {len(sent_links)} άρθρα')
-    check_rss.start()
+    print(f'✅ {bot.user} είναι online!')
+    if not check_rss.is_running():
+        check_rss.start()
 
+
+# -------- RSS Check --------
 @tasks.loop(minutes=5)
 async def check_rss():
     global sent_links
+
     channel = None
     for guild in bot.guilds:
         for ch in guild.text_channels:
             if ch.name == CHANNEL_NAME:
                 channel = ch
                 break
+
     if channel is None:
-        print(f"❌ Δεν βρέθηκε το κανάλι #{CHANNEL_NAME}")
+        print("❌ Δεν βρέθηκε κανάλι")
         return
+
     feed = feedparser.parse(RSS_URL)
+
     if not feed.entries:
         print("⚠️ Δεν βρέθηκαν άρθρα")
         return
-    new_links = []
+
+    # 👉 ΠΡΩΤΗ ΦΟΡΑ: μην στείλεις τίποτα
+    if not sent_links:
+        for entry in feed.entries:
+            sent_links.add(entry.link)
+        save_sent_links(sent_links)
+        print("📌 First run - αποθήκευση χωρίς αποστολή")
+        return
+
+    new_found = False
+
     for entry in reversed(feed.entries):
         if entry.link not in sent_links:
             sent_links.add(entry.link)
-            new_links.append(entry.link)
-            message = f"📢 **Νέο άρθρο!**\n**{entry.title}**\n{entry.link}"
-            await channel.send(message)
+            new_found = True
+
+            msg = f"📢 **Νέο άρθρο!**\n**{entry.title}**\n{entry.link}"
+            await channel.send(msg)
             print(f"✅ Στάλθηκε: {entry.title}")
             await asyncio.sleep(1)
-    if new_links:
-        save_sent_links(sent_links)
-        print(f"💾 Αποθηκεύτηκαν {len(new_links)} νέα links")
 
+    if new_found:
+        save_sent_links(sent_links)
+
+
+# -------- Commands --------
 @bot.command()
 async def ping(ctx):
-    if ctx.channel.name == CHANNEL_NAME:
-        await ctx.send("pong!")
-    else:
-        await ctx.send(f"Το bot λειτουργεί μόνο στο κανάλι #{CHANNEL_NAME}")
+    await ctx.send("pong!")
+
 
 @bot.command()
 async def test_rss(ctx):
-    if ctx.channel.name == CHANNEL_NAME:
-        await ctx.send("🔍 Έλεγχος RSS...")
-        await check_rss()
-    else:
-        await ctx.send(f"Η εντολή λειτουργεί μόνο στο κανάλι #{CHANNEL_NAME}")
+    await ctx.send("🔍 Test RSS...")
+    await check_rss()
 
-bot.run(os.getenv('DISCORD_TOKEN'))
+
+# -------- Run --------
+if __name__ == "__main__":
+    bot.run(os.getenv("DISCORD_TOKEN"))
